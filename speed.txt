@@ -1,0 +1,8 @@
+esrgan, 0.174219
+quicksrnetlarge, 11.8645 
+quicksrnetmedium, 39.4693
+quicksrnetsmall, 48.2786
+real_esrgan_general_x4v3, 4.25718
+real_esrgan_x4plus, 0.173711
+sesr_m5, 6.93976
+xlsr, 28.7331
