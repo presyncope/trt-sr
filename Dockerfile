@@ -75,6 +75,10 @@ WORKDIR /workspace
 # 7. Clone and Build Repo
 RUN git clone https://github.com/presyncope/trt-sr.git
 
+# Ensure clean build by removing any potential pre-existing binaries and build artifacts
+# This prevents "GLIBC version not found" errors if the repo contained binaries built on a newer OS
+RUN rm -rf /workspace/trt-sr/bin/* /workspace/trt-sr/cpp/superres/build
+
 WORKDIR /workspace/trt-sr/cpp/superres
 
 # Fix: Set explicit CUDA Architectures to avoid "native" error during docker build
