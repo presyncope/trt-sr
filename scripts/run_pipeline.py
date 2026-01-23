@@ -135,11 +135,9 @@ def main():
         # Using h264_nvenc as requested/previously used.
         # If unavailable, user needs to change codec or install drivers.
         # Fallback handling could be added but let's stick to spec.
-        try:
-            out_stream = output_container.add_stream("h264_nvenc", rate=fps)
-        except Exception:
-            print("Warning: h264_nvenc not available, falling back to libx264")
-            out_stream = output_container.add_stream("libx264", rate=fps)
+        # Per user request: Use libx264 with ultrafast preset for speed and compatibility
+        out_stream = output_container.add_stream("libx264", rate=fps)
+        out_stream.options = {"preset": "ultrafast"}
 
         out_stream.width = width
         out_stream.height = height
