@@ -1,8 +1,10 @@
-esrgan, 0.174219
-quicksrnetlarge, 11.8645 
-quicksrnetmedium, 39.4693
-quicksrnetsmall, 48.2786
-real_esrgan_general_x4v3, 4.25718
-real_esrgan_x4plus, 0.173711
-sesr_m5, 6.93976
-xlsr, 28.7331
+RTX4070 mobile
+
+esrgan_f16.onnx, 0.289085
+quicksrnetlarge_f16.onnx, 17.4229
+quicksrnetmedium_f16.onnx, 52.9494
+quicksrnetsmall_f16.onnx, 59.1239
+realesrgan_general_x4v3_f16.onnx, 6.73016
+realesrgan_x4plus_f16.onnx, 0.287886
+sesrm5_f16.onnx,  9.99495
+xlsr_f16.onnx, 40.6126
