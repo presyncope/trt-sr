@@ -72,8 +72,8 @@ RUN pip install \
 
 WORKDIR /workspace
 
-# 7. Clone and Build Repo
-RUN git clone https://github.com/presyncope/trt-sr.git
+# 7. Copy local source
+COPY . /workspace/trt-sr/
 
 # Ensure clean build by removing any potential pre-existing binaries and build artifacts
 # This prevents "GLIBC version not found" errors if the repo contained binaries built on a newer OS
