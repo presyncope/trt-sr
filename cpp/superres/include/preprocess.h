@@ -13,6 +13,8 @@ struct PreprocessParams {
   int src_start_y;
   int overlap_pixels;
   bool video_full_range_flag;
+  int bitdepth;
+  int chfmt;
 };
 
 void preprocess(const PreprocessParams &params, cudaStream_t stream);

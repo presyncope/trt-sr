@@ -6,8 +6,15 @@ typedef struct real_esrgan_context *real_esrgan_handle;
 
 typedef struct real_esrgan_init_params {
   const char *plan_file;
-  int width;
-  int height;
+  int input_width;
+  int input_height;
+  int input_bitdepth; // range: 8~16
+  int input_chfmt;    // {420,422,444,400}
+  int output_width;
+  int output_height;
+  int output_bitdepth; // range: 8~16
+  int output_chfmt;    // {420,422,444,400}
+  float prescale; // range: 0.25~1.0 , used for performance increment
   int overlap_pixels;
 } real_esrgan_init_params;
 

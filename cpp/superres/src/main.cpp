@@ -62,8 +62,29 @@ void process(const AppConfig &config) {
       handle_holder(handle, real_esrgan_destroy);
 
   real_esrgan_init_params ipar{};
-  ipar.width = config.width;
-  ipar.height = config.height;
+  ipar.input_width = config.width;
+  ipar.input_height = config.height;
+  ipar.input_bitdepth = 8;
+  ipar.input_chfmt = 420;
+  
+  // By default, assuming same output dimensions as input * 4 if we want SR,
+  // OR same as input if we assumed 0.25x resize was previously intended to keep resolution.
+  // The PREVIOUS code had a resize layer 0.25x at the end.
+  // The model is x4. So x4 * 0.25 = x1.
+  // So the PREVIOUS OUTPUT was the SAME size as INPUT.
+  // To match previous behavior:
+  // output_width = input_width;
+  // output_height = input_height;
+  // The implementation of real-esrgan-process will now do:
+  // 1. x4 model inference
+  // 2. resize down to output_width (which is input_width).
+  
+  ipar.output_width = config.width;
+  ipar.output_height = config.height;
+  ipar.output_bitdepth = 8;
+  ipar.output_chfmt = 420;
+  
+  ipar.prescale = 1.0f; // No prescale by default in main tool unless added to args
   ipar.overlap_pixels = 4;
   ipar.plan_file = config.plan_file.c_str();
 
