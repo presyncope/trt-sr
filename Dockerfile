@@ -1,8 +1,8 @@
 # Refactored Dockerfile based on user provided reference
 # Using CUDA 12.3 and Ubuntu 22.04 for stability with typical ML workflows
-FROM nvidia/cuda:12.3.1-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
 
-LABEL maintainer="Nuk"
+LABEL maintainer="NVIDIA CORPORATION"
 
 ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-c"]
@@ -77,12 +77,9 @@ COPY . /workspace/trt-sr/
 
 # Ensure clean build by removing any potential pre-existing binaries and build artifacts
 # This prevents "GLIBC version not found" errors if the repo contained binaries built on a newer OS
-RUN rm -rf /workspace/trt-sr/bin/* /workspace/trt-sr/cpp/superres/build
+RUN rm -rf /workspace/trt-sr/bin/* /workspace/trt-sr/cpp/build
 
-WORKDIR /workspace/trt-sr/cpp/superres
-
-# Fix: Set explicit CUDA Architectures to avoid "native" error during docker build
-RUN sed -i 's/set(CMAKE_CUDA_ARCHITECTURES "native")/set(CMAKE_CUDA_ARCHITECTURES "75;80;86;89")/' CMakeLists.txt
+WORKDIR /workspace/trt-sr/cpp
 
 RUN mkdir build && cd build && \
     cmake .. && \

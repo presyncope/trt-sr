@@ -9,7 +9,7 @@ This repository contains a Dockerized setup for running the TensorRT Super Resol
 Build the Docker image using the following command:
 
 ```bash
-docker build -t trt-sr-pipeline .
+docker build -t trt-build -f docker/trt-build.Dockerfile .
 ```
 
 ### 2. Run the Pipeline

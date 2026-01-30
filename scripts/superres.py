@@ -26,6 +26,28 @@ def parse_args():
         help="Path to real-esrgan-app binary",
     )
 
+    # New arguments matching main.cpp
+    parser.add_argument(
+        "--input-format",
+        default="i420",
+        help="Input Pixel Format (i420, nv12, i422, nv16, i010, p010, i210, p210, i016, p016, i216, p216)",
+    )
+    parser.add_argument(
+        "--input-full-range", type=int, default=0, help="Input Full Range (0 or 1)"
+    )
+    parser.add_argument(
+        "--output-width", type=int, default=0, help="Output Width (0=same as input)"
+    )
+    parser.add_argument(
+        "--output-height", type=int, default=0, help="Output Height (0=same as input)"
+    )
+    parser.add_argument("--output-format", default="i420", help="Output Pixel Format")
+    parser.add_argument(
+        "--output-full-range", type=int, default=0, help="Output Full Range (0 or 1)"
+    )
+    parser.add_argument("--prescale", type=float, default=1.0, help="Prescale factor")
+    parser.add_argument("--overlap", type=int, default=4, help="Overlap pixels")
+
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
@@ -111,7 +133,24 @@ def main():
         str(width),
         "--height",
         str(height),
+        "--input-format",
+        args.input_format,
+        "--input-full-range",
+        str(args.input_full_range),
+        "--output-format",
+        args.output_format,
+        "--output-full-range",
+        str(args.output_full_range),
+        "--prescale",
+        str(args.prescale),
+        "--overlap",
+        str(args.overlap),
     ]
+    if args.output_width > 0:
+        cmd.extend(["--output-width", str(args.output_width)])
+    if args.output_height > 0:
+        cmd.extend(["--output-height", str(args.output_height)])
+
     if args.onnx_file:
         cmd.extend(["--onnx-file", args.onnx_file])
 
@@ -139,14 +178,17 @@ def main():
         out_stream = output_container.add_stream("libx264", rate=fps)
         out_stream.options = {"preset": "ultrafast"}
 
-        out_stream.width = width
-        out_stream.height = height
+        out_width = args.output_width if args.output_width > 0 else width
+        out_height = args.output_height if args.output_height > 0 else height
+
+        out_stream.width = out_width
+        out_stream.height = out_height
         out_stream.pix_fmt = "yuv420p"
 
         # Calculate frame size in bytes for YUV420P
         # Y=w*h, U=w*h/4, V=w*h/4 -> Total = w*h*1.5
-        y_size = width * height
-        uv_size = (width // 2) * (height // 2)
+        y_size = out_width * out_height
+        uv_size = (out_width // 2) * (out_height // 2)
         frame_size = y_size + 2 * uv_size
 
         print("Processing...", flush=True)
@@ -168,7 +210,7 @@ def main():
                 break
 
             # Create av.VideoFrame
-            frame = av.VideoFrame(width, height, "yuv420p")
+            frame = av.VideoFrame(out_width, out_height, "yuv420p")
 
             # Copy data to planes
             # raw_data is flat YUV
