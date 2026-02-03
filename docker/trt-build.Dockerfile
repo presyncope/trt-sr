@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Using the URL from the reference logic for CUDA 12.x
 # URL: https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.14.1/tars/TensorRT-10.14.1.48.Linux.x86_64-gnu.cuda-12.9.tar.gz
 RUN wget -q https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.14.1/tars/TensorRT-10.14.1.48.Linux.x86_64-gnu.cuda-12.9.tar.gz \
-    && tar -xf TensorRT-10.14.1.48.Linux.x86_64-gnu.cuda-12.9.tar.gz -C /usr/local \
+    && tar -xf TusfeensorRT-10.14.1.48.Linux.x86_64-gnu.cuda-12.9.tar.gz -C /usr/local \
     && mv /usr/local/TensorRT-10.14.1.48 /usr/local/tensorrt \
     && rm TensorRT-10.14.1.48.Linux.x86_64-gnu.cuda-12.9.tar.gz
 
