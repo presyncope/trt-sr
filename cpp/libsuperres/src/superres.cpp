@@ -4,7 +4,9 @@
 #include "preprocess.h"
 #include "resize.h"
 #include <NvInfer.h>
+#if SR_ENABLE_NVONNXPARSER
 #include <NvOnnxParser.h>
+#endif
 #include <cuda_runtime.h>
 #include <fstream>
 #include <iostream>
@@ -12,7 +14,9 @@
 #include <vector>
 
 using namespace nvinfer1;
+#if SR_ENABLE_NVONNXPARSER
 using namespace nvonnxparser;
+#endif
 
 #define CUDA_CHECK(callstr)                                                    \
   {                                                                            \
@@ -234,6 +238,7 @@ static int copy_frame_to_host(const frame_buffer &src, sr_frame &dst,
 extern "C" {
 
 int sr_build(const char *model_onnx, const char *plan_file) {
+#if SR_ENABLE_NVONNXPARSER
   if (!model_onnx || !plan_file) {
     std::cerr << "[sr_build] Error: Invalid arguments to sr_build. model_onnx "
                  "and plan_file must be provided."
@@ -317,6 +322,8 @@ int sr_build(const char *model_onnx, const char *plan_file) {
 
   config->addOptimizationProfile(profile);
   config->setMemoryPoolLimit(MemoryPoolType::kWORKSPACE, 2ULL << 30);
+  config->setHardwareCompatibilityLevel(HardwareCompatibilityLevel::kAMPERE_PLUS);
+  config->setFlag(BuilderFlag::kVERSION_COMPATIBLE);
 
   std::cerr << "[sr_build] Building serialized network..." << std::endl;
   auto plan = std::unique_ptr<IHostMemory>(
@@ -338,6 +345,9 @@ int sr_build(const char *model_onnx, const char *plan_file) {
             << std::endl;
 
   return 0;
+#else
+  return 0;
+#endif
 }
 
 sr_handle sr_create() {
