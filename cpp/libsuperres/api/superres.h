@@ -1,4 +1,5 @@
 #pragma once
+#define ENABLE_NVONNXPARSER 1
 
 #include <stddef.h>
 #include <stdint.h>
@@ -48,6 +49,8 @@ typedef enum sr_pixel_format {
   // [Semi-Planar 16-bit] 2 Planes: Y(16b), UV(16b interleaved)
   SR_PIXEL_FMT_P216 = 19,
 
+  SR_PIXEL_FMT_UNKNOWN = -1
+
 } sr_pixel_format;
 
 typedef struct sr_init_params {
@@ -62,7 +65,19 @@ typedef struct sr_init_params {
   int output_color_fullrange; // default 0 (limited range)
   float prescale;     // range: 0.25 ~ 1.0 , used for performance increment
   int overlap_pixels; // 4 or 2 is recommended
+  int concurrent_batches;
 } sr_init_params;
+
+typedef struct sr_build_params {
+  const char *model_onnx; // [src, required]
+  const char *plan_file;  // [dst, required]
+  uint64_t max_workspace_size;
+  uint64_t max_shared_memory;
+  int min_batch_size;
+  int max_batch_size;
+  int optimal_batch_size;
+  bool strongly_typed;
+} sr_build_params;
 
 typedef struct sr_frame {
   void *data[3];
@@ -80,7 +95,7 @@ extern "C" {
  * @param plan_file Path to the destination TensorRT plan file.
  * @return int 0 on success, negative value on failure.
  */
-int sr_build(const char *model_onnx, const char *plan_file);
+int sr_build(const sr_build_params *params);
 
 /**
  * @brief Create a new super resolution context handle.

@@ -30,6 +30,14 @@ struct AppConfig {
 
   float prescale = 1.0f;
   int overlap = 4;
+
+  // New fields for updated API
+  int concurrent_batches = 1;
+  uint64_t max_workspace_size = 0;
+  int min_batch_size = 1;
+  int max_batch_size = 8;
+  int opt_batch_size = 8;
+  bool strongly_typed = false;
 };
 
 // Helper to map string to sr_pixel_format
@@ -59,6 +67,13 @@ AppConfig parse_args(int argc, char **argv) {
   AppConfig config{};
 
   CLI::App app("Superres");
+
+  // Config file support: automatically read config.ini if it exists in CWD
+  app.set_config("--config");
+  if (std::ifstream("config.ini").good()) {
+    app.set_config("--config", "config.ini");
+  }
+
   app.add_option("-m,--mode", config.mode,
                  "Mode (1: build, 2: process, 3: both)")
       ->required();
@@ -87,6 +102,14 @@ AppConfig parse_args(int argc, char **argv) {
                  "Prescale factor (0.25 to 1.0)");
   app.add_option("--overlap", config.overlap, "Overlap pixels");
 
+  // New options for updated API
+  app.add_option("--batches", config.concurrent_batches, "Concurrent batches (1-64)");
+  app.add_option("--workspace", config.max_workspace_size, "Max workspace size (bytes)");
+  app.add_option("--min-batch", config.min_batch_size, "Min batch size for engine");
+  app.add_option("--max-batch", config.max_batch_size, "Max batch size for engine");
+  app.add_option("--opt-batch", config.opt_batch_size, "Optimal batch size for engine");
+  app.add_flag("--strongly-typed", config.strongly_typed, "Enable strongly typed network");
+
   try {
     app.parse(argc, argv);
   } catch (const CLI::CallForHelp &e) {
@@ -110,7 +133,16 @@ AppConfig parse_args(int argc, char **argv) {
 }
 
 void build_plan(const AppConfig &config) {
-  int ret = sr_build(config.onnx_file.c_str(), config.plan_file.c_str());
+  sr_build_params bpar{};
+  bpar.model_onnx = config.onnx_file.c_str();
+  bpar.plan_file = config.plan_file.c_str();
+  bpar.max_workspace_size = config.max_workspace_size;
+  bpar.min_batch_size = config.min_batch_size;
+  bpar.max_batch_size = config.max_batch_size;
+  bpar.optimal_batch_size = config.opt_batch_size;
+  bpar.strongly_typed = config.strongly_typed;
+
+  int ret = sr_build(&bpar);
   if (ret != 0) {
     std::cerr << "Build failed." << std::endl;
   }
@@ -231,6 +263,7 @@ void process(const AppConfig &config) {
   ipar.output_color_fullrange = config.output_full_range;
   ipar.prescale = config.prescale;
   ipar.overlap_pixels = config.overlap;
+  ipar.concurrent_batches = config.concurrent_batches;
 
   if (sr_init(handle, &ipar) != 0) {
     std::cerr << "Failed to init superres" << std::endl;

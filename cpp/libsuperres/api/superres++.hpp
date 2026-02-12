@@ -25,10 +25,16 @@ public:
     m_handle.reset(h);
   }
 
+  bool is_initialized() const { return m_initialized; }
+
   void init(const sr_init_params &params) {
+    if (m_initialized)
+      m_handle.reset(sr_create());
+
     if (sr_init(m_handle.get(), &params) != 0) {
       throw std::runtime_error("Failed to initialize SuperRes context.");
     }
+    m_initialized = true;
   }
 
   void process(const sr_frame &src, sr_frame &dst) {
@@ -37,19 +43,17 @@ public:
     }
   }
 
-  static void build(const std::string &onnx_path,
-                    const std::string &plan_path) {
-#if SR_ENABLE_NVONNXPARSER
-    if (sr_build(onnx_path.c_str(), plan_path.c_str()) != 0) {
+  static void build(const sr_build_params &params) {
+    if (sr_build(&params) != 0) {
       throw std::runtime_error("Failed to build TensorRT plan from ONNX.");
     }
-#endif
   }
 
   sr_handle get() const { return m_handle.get(); }
 
 private:
-  std::unique_ptr<sr_context, HandleDeleter> m_handle;
+  std::unique_ptr<sr_context, HandleDeleter> m_handle = {};
+  bool m_initialized = false;
 };
 
 } // namespace sr

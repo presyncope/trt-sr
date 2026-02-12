@@ -43,9 +43,8 @@ find_library(NVONNXPARSER_LIB nvonnxparser
 )
 
 # 4. Validate TensorRT and Define Target
-# 4. Validate TensorRT and Define Target
 if (NOT NVINFER_LIB OR NOT TENSORRT_INCLUDE_DIR)
-    message(STATUS "Could not find TensorRT. SuperRes build will be skipped (ENABLE_SUPERRES remains ON).")
+    message(STATUS "Could not find TensorRT (nvinfer or headers). SuperRes build will be skipped (ENABLE_SUPERRES remains ON).")
     set(SUPERRES_FOUND OFF CACHE INTERNAL "SuperRes library is built and available")
     return()
 endif()
@@ -53,10 +52,11 @@ endif()
 message(STATUS "TensorRT Found:")
 message(STATUS "  Include: ${TENSORRT_INCLUDE_DIR}")
 message(STATUS "  Lib nvinfer: ${NVINFER_LIB}")
-if(NVONNXPARSER_LIB)
-    message(STATUS "  Lib nvonnxparser: ${NVONNXPARSER_LIB}")
+
+if (NVONNXPARSER_LIB)
+    message(STATUS "  Lib nvonnxparser: ${NVONNXPARSER_LIB} (Found)")
 else()
-    message(STATUS "  Lib nvonnxparser: NOT FOUND (ONNX build support disabled)")
+    message(STATUS "  Lib nvonnxparser: NOT FOUND. sr_build will be disabled.")
 endif()
 
 add_library(superres SHARED
@@ -64,6 +64,7 @@ add_library(superres SHARED
     src/postprocess.cu
     src/preprocess.cu
     src/resize.cu
+    src/common.cpp
 )
 
 target_compile_options(superres PRIVATE -Wno-deprecated-declarations)
@@ -77,14 +78,14 @@ target_include_directories(superres
 )
 
 if (NVONNXPARSER_LIB)
-    target_compile_definitions(superres PUBLIC SR_ENABLE_NVONNXPARSER=1)
+    target_compile_definitions(superres PRIVATE ENABLE_NVONNXPARSER=1)
     target_link_libraries(superres
         ${NVINFER_LIB}
         ${NVONNXPARSER_LIB}
         CUDA::cudart
     )
 else()
-    target_compile_definitions(superres PUBLIC SR_ENABLE_NVONNXPARSER=0)
+    target_compile_definitions(superres PRIVATE ENABLE_NVONNXPARSER=0)
     target_link_libraries(superres
         ${NVINFER_LIB}
         CUDA::cudart

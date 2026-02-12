@@ -1,17 +1,19 @@
 #pragma once
-#include <cuda_fp16.h>
-#include <cuda_runtime.h>
+#include "common.h"
 
 struct PostprocessParams {
-  const half *d_srcTensor;
-  void *d_dst;
-  size_t dst_pitch;
-  int dst_width[2];
-  int dst_height[2];
-  int dst_bitdepth;  // 8 or 10 or 16
-  int dst_num_comps; // 2 if interleaved, 3 if planar
-  int dst_start_y;
+  // Src Partial Info
+  const TensorBuffer *src_tensor; // [Batch, 3, 512, 512] NCHW layout assumed
+  int batch_size;
   int overlap_pixels;
+
+  // Src Global Geometrics
+  int src_virtual_width; // e.g., 7680
+  int src_virtual_height; // e.g., 4320
+  int start_tile_index;
+
+  // Dst Frame Info
+  FrameBuffer *dst_frame;
   bool video_full_range_flag;
 };
 

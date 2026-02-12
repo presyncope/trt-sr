@@ -1,184 +1,261 @@
-#include "common.h"
 #include "postprocess.h"
-#include <cmath>
-#include <cuda_runtime.h>
-#include <stdint.h>
-#include <stdio.h>
+#include <cuda_fp16.h>
+
+// ------------------------------------------------------------------
+// 1. Context & Helpers
+// ------------------------------------------------------------------
 
 struct ColorConvParams {
-  float3 y_coef;
-  float y_off;
-  float3 u_coef;
-  float u_off;
-  float3 v_coef;
-  float v_off;
+  float3 y_coef; float y_off;
+  float3 u_coef; float u_off;
+  float3 v_coef; float v_off;
 };
 
-static void populate_ccparams(ColorConvParams &params, bool full_range,
-                              int bitdepth) {
-  float max_val = (float)((1 << bitdepth) - 1);
-  float scale =
-      max_val / 255.0f; // Scale factor from 8-bit spec to target bitdepth
+struct KernelContext {
+    // Destination Info
+  int dst_width;
+  int dst_height;
+  int dst_stride_y;  // Bytes
+  int dst_stride_uv; // Bytes
+  bool is_nv12;      // True if UV interleaved
+  int chroma_sub_x;  // Shift amount (e.g., 1 for 4:2:0/4:2:2)
+  int chroma_sub_y;
+
+  // Source & Tiling Info
+  int src_valid_w;   // Tensor width - 2 * overlap
+  int src_valid_h;
+  int overlap;
+  int tensor_stride; // Full tensor width (e.g. 512)
+
+  int start_tile_index;
+  int num_tiles_x;
+
+  float scale_x;     // dst_width / src_virtual_width
+  float scale_y;
+
+  ColorConvParams ccp;
+};
+
+struct BilinearCoords {
+  int x0, y0, x1, y1;
+  float wx, wy;
+};
+
+__device__ __forceinline__ void compute_bilinear_coords(
+    float u, float v, int limit_w, int limit_h, BilinearCoords* coords) 
+{
+  coords->x0 = __float2int_rd(u); // floor
+  coords->y0 = __float2int_rd(v);
+  
+  // Boundary checkh
+  coords->x1 = min(coords->x0 + 1, limit_w - 1);
+  coords->y1 = min(coords->y0 + 1, limit_h - 1);
+  coords->x0 = max(0, min(coords->x0, limit_w - 1));
+  coords->y0 = max(0, min(coords->y0, limit_h - 1));
+
+  coords->wx = u - coords->x0;
+  coords->wy = v - coords->y0;
+}
+
+__device__ __forceinline__ float sample_plane_fast(
+    const half *__restrict__ plane_ptr, 
+    int stride, 
+    const BilinearCoords& c) 
+{
+  // __ldg for Read-Only Cache
+  const half* row0 = plane_ptr + c.y0 * stride;
+  const half* row1 = plane_ptr + c.y1 * stride;
+
+  float v00 = __half2float(__ldg(&row0[c.x0]));
+  float v10 = __half2float(__ldg(&row0[c.x1]));
+  float v01 = __half2float(__ldg(&row1[c.x0]));
+  float v11 = __half2float(__ldg(&row1[c.x1]));
+
+  // Interpolation
+  float val_top = v00 + c.wx * (v10 - v00); 
+  float val_bot = v01 + c.wx * (v11 - v01); 
+  return val_top + c.wy * (val_bot - val_top);
+}
+
+// ------------------------------------------------------------------
+// 2. Kernel
+// ------------------------------------------------------------------
+
+template <typename T>
+__global__ void k_postprocess(
+    const half *__restrict__ src_tensor,
+    uint8_t *__restrict__ ptr_dst_y,   
+    uint8_t *__restrict__ ptr_dst_uv1,
+    uint8_t *__restrict__ ptr_dst_uv2, 
+    KernelContext ctx)
+{
+  int batch_idx = blockIdx.z; // Batch Index = Tile Index in this grid setup
+
+  int global_tile_idx = ctx.start_tile_index + batch_idx;
+  int tx = global_tile_idx % ctx.num_tiles_x;
+  int ty = global_tile_idx / ctx.num_tiles_x;
+
+  // 1. Output Region Calculation
+  int dst_start_x = (int)((long long)tx * ctx.src_valid_w * ctx.scale_x);
+  int dst_end_x = (int)((long long)(tx + 1) * ctx.src_valid_w * ctx.scale_x);
+  int dst_start_y = (int)((long long)ty * ctx.src_valid_h * ctx.scale_y);
+  int dst_end_y = (int)((long long)(ty + 1) * ctx.src_valid_h * ctx.scale_y);
+
+  dst_end_x = min(dst_end_x, ctx.dst_width);
+  dst_end_y = min(dst_end_y, ctx.dst_height);
+
+  // 2. Thread Local Mapping
+  int dst_x = dst_start_x + blockIdx.x * blockDim.x + threadIdx.x;
+  int dst_y = dst_start_y + blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (dst_x >= dst_end_x || dst_y >= dst_end_y)
+    return;
+
+  // 3. Inverse Mapping (Dst -> Src Tensor)
+  float global_src_x = (dst_x + 0.5f) / ctx.scale_x;
+  float global_src_y = (dst_y + 0.5f) / ctx.scale_y;
+
+  float tensor_u = global_src_x - (tx * ctx.src_valid_w) + ctx.overlap;
+  float tensor_v = global_src_y - (ty * ctx.src_valid_h) + ctx.overlap;
+
+  BilinearCoords coords;
+  compute_bilinear_coords(tensor_u, tensor_v, ctx.tensor_stride, ctx.tensor_stride, &coords);
+
+  // 4. Sampling RGB
+  // Tensor Layout: [Batch, 3, H, W]
+  long plane_pixels = (long)ctx.tensor_stride * ctx.tensor_stride;
+  const half *ptr_r = src_tensor + (long)batch_idx * 3 * plane_pixels;
+  const half *ptr_g = ptr_r + plane_pixels;
+  const half *ptr_b = ptr_g + plane_pixels;
+
+  float r = sample_plane_fast(ptr_r, ctx.tensor_stride, coords) * 255.0f;
+  float g = sample_plane_fast(ptr_g, ctx.tensor_stride, coords) * 255.0f;
+  float b = sample_plane_fast(ptr_b, ctx.tensor_stride, coords) * 255.0f;
+
+  // 5. Color Conversion & Store
+  constexpr float max_val = (float)((1 << (sizeof(T) * 8)) - 1);
+
+  // Y Plane Write
+  float y_val = ctx.ccp.y_off + ctx.ccp.y_coef.x * r + ctx.ccp.y_coef.y * g + ctx.ccp.y_coef.z * b;
+  T *row_y = (T *)(ptr_dst_y + dst_y * ctx.dst_stride_y);
+  row_y[dst_x] = (T)fminf(fmaxf(y_val, 0.0f), max_val);
+
+  // Chroma Processing (Subsampled)
+  bool is_chroma_site = ((dst_x & ((1 << ctx.chroma_sub_x) - 1)) == 0) &&
+                        ((dst_y & ((1 << ctx.chroma_sub_y) - 1)) == 0);
+
+  if (is_chroma_site)
+  {
+    float u_val = ctx.ccp.u_off + ctx.ccp.u_coef.x * r + ctx.ccp.u_coef.y * g + ctx.ccp.u_coef.z * b;
+    float v_val = ctx.ccp.v_off + ctx.ccp.v_coef.x * r + ctx.ccp.v_coef.y * g + ctx.ccp.v_coef.z * b;
+
+    int cx = dst_x >> ctx.chroma_sub_x;
+    int cy = dst_y >> ctx.chroma_sub_y;
+
+    T *row_u_base = (T *)(ptr_dst_uv1 + cy * ctx.dst_stride_uv);
+
+    if (ctx.is_nv12)
+    {
+      // Interleaved (UVUV...)
+      row_u_base[2 * cx + 0] = (T)fminf(fmaxf(u_val, 0.0f), max_val);
+      row_u_base[2 * cx + 1] = (T)fminf(fmaxf(v_val, 0.0f), max_val);
+    }
+    else
+    {
+      // Planar (I420 etc.)
+      T *row_v_base = (T *)(ptr_dst_uv2 + cy * ctx.dst_stride_uv);
+      row_u_base[cx] = (T)fminf(fmaxf(u_val, 0.0f), max_val);
+      row_v_base[cx] = (T)fminf(fmaxf(v_val, 0.0f), max_val);
+    }
+  }
+}
+
+// ------------------------------------------------------------------
+// 3. Host Dispatcher
+// ------------------------------------------------------------------
+
+static void populate_ccparams(ColorConvParams &ccp, bool full_range, int bitdepth)
+{
+  float max_v = (float)((1 << bitdepth) - 1);
+  float scale = max_v / 255.0f;
 
   if (full_range) {
-    // BT.709 Full Range
-    params.y_coef =
-        make_float3(0.2126f * 255.0f * scale, 0.7152f * 255.0f * scale,
-                    0.0722f * 255.0f * scale);
-    params.y_off = 0.0f;
-
-    params.u_coef =
-        make_float3(-0.1146f * 255.0f * scale, -0.3854f * 255.0f * scale,
-                    0.5000f * 255.0f * scale);
-    params.u_off = 128.0f * scale;
-
-    params.v_coef =
-        make_float3(0.5000f * 255.0f * scale, -0.4542f * 255.0f * scale,
-                    -0.0458f * 255.0f * scale);
-    params.v_off = 128.0f * scale;
+    ccp.y_coef = make_float3(0.2126f, 0.7152f, 0.0722f); ccp.y_off = 0.0f;
+    ccp.u_coef = make_float3(-0.1146f, -0.3854f, 0.5000f); ccp.u_off = 128.0f;
+    ccp.v_coef = make_float3(0.5000f, -0.4542f, -0.0458f); ccp.v_off = 128.0f;
   } else {
-    // BT.709 Limited Range
-    params.y_coef =
-        make_float3(0.2126f * 219.0f * scale, 0.7152f * 219.0f * scale,
-                    0.0722f * 219.0f * scale);
-    params.y_off = 16.0f * scale;
-
-    params.u_coef =
-        make_float3(-0.1146f * 224.0f * scale, -0.3854f * 224.0f * scale,
-                    0.5000f * 224.0f * scale);
-    params.u_off = 128.0f * scale;
-
-    params.v_coef =
-        make_float3(0.5000f * 224.0f * scale, -0.4542f * 224.0f * scale,
-                    -0.0458f * 224.0f * scale);
-    params.v_off = 128.0f * scale;
+    ccp.y_coef = make_float3(0.1826f, 0.6142f, 0.0620f); ccp.y_off = 16.0f;
+    ccp.u_coef = make_float3(-0.1006f, -0.3386f, 0.4392f); ccp.u_off = 128.0f;
+    ccp.v_coef = make_float3(0.4392f, -0.3989f, -0.0403f); ccp.v_off = 128.0f;
   }
-}
 
-// Helper for safe saturation and casting
-template <typename T>
-__device__ __forceinline__ T clip_val(float v, int bitdepth) {
-  float max_v = (float)((1 << bitdepth) - 1);
-  return static_cast<T>(__float2int_rn(fminf(fmaxf(v, 0.0f), max_v)));
-}
-
-template <typename T>
-__global__ void
-postprocess_yuv_kernel(const half *__restrict__ srcTensor,
-                       T *__restrict__ dstFrame, int dstWidth, int dstHeight,
-                       int dstHeightC, int dstOffsetY, int dstBitdepth,
-                       size_t dstPitch, int overlap_pixels,
-                       const ColorConvParams ccp, int num_comps) {
-  static_assert(sizeof(T) == 1 || sizeof(T) == 2, "T must be uint8 or uint16");
-  const int local_x = blockIdx.x * blockDim.x + threadIdx.x;
-  const int local_y = blockIdx.y * blockDim.y + threadIdx.y;
-  const int n = blockIdx.z; // tile index in batch
-
-  // TILE_SIZE is Model Input Tile. Output/Effective Tile is scaled.
-  // We assume 'overlap_pixels' passed here is ALREADY SCALED by process().
-  // And we iterate over the Scaled Tile.
-  const int effective_tile_dim = TILE_SIZE * 4;
-  const int tile_size = effective_tile_dim - 2 * overlap_pixels;
-
-  const int dst_x = local_x + n * tile_size;
-  const int dst_y = dstOffsetY + local_y;
-
-  if (dst_x >= dstWidth || dst_y >= dstHeight)
-    return;
-
-  if (local_x >= tile_size || local_y >= tile_size)
-    return;
-
-  const int src_x = local_x + overlap_pixels;
-  const int src_y = local_y + overlap_pixels;
-
-  // Tensor Plane Size is based on Output Tensor Dim (Scaled)
-  size_t plane_size = (size_t)effective_tile_dim * effective_tile_dim;
-  const half *src_tile = srcTensor + n * plane_size * 3;
-  const size_t tensor_idx = src_y * effective_tile_dim + src_x;
-
-  float red = __half2float(src_tile[tensor_idx]);
-  float green = __half2float(src_tile[plane_size + tensor_idx]);
-  float blue = __half2float(src_tile[2 * plane_size + tensor_idx]);
-
-  // rgb to yuv
-  float y_comp =
-      fmaf(ccp.y_coef.x, red,
-           fmaf(ccp.y_coef.y, green, fmaf(ccp.y_coef.z, blue, ccp.y_off)));
-  float u_comp =
-      fmaf(ccp.u_coef.x, red,
-           fmaf(ccp.u_coef.y, green, fmaf(ccp.u_coef.z, blue, ccp.u_off)));
-  float v_comp =
-      fmaf(ccp.v_coef.x, red,
-           fmaf(ccp.v_coef.y, green, fmaf(ccp.v_coef.z, blue, ccp.v_off)));
-
-  uint8_t *dstY_bytes = reinterpret_cast<uint8_t *>(dstFrame);
-  T *rowY = reinterpret_cast<T *>(dstY_bytes + dst_y * dstPitch);
-  rowY[dst_x] = clip_val<T>(y_comp, dstBitdepth);
-
-  // Chroma Store
-  // Determine if we need to store chroma for this pixel.
-  // Assuming 4:2:0 if dstHeight != dstHeightC
-  // only considers 4:2:0 and 4:2:2
-  bool is_420 = (dstHeight != dstHeightC);
-
-  if ((dst_x & 1) || (is_420 && (dst_y & 1)))
-    return;
-
-  // Calculate UV coordinates
-  int uv_x = dst_x >> 1;
-  int uv_y = is_420 ? (dst_y >> 1) : dst_y;
-
-  // Base pointers
-  // U is at Y + H * Pitch
-  uint8_t *dstU_bytes = dstY_bytes + dstHeight * dstPitch;
-  T *rowU = reinterpret_cast<T *>(dstU_bytes + uv_y * dstPitch);
-
-  if (num_comps == 2) {
-    // Interleaved: U V U V
-    // U at 2*uv_x, V at 2*uv_x+1
-    rowU[2 * uv_x] = clip_val<T>(u_comp, dstBitdepth);
-    rowU[2 * uv_x + 1] = clip_val<T>(v_comp, dstBitdepth);
-  } else {
-    // Planar: V is at U + HC * Pitch
-    uint8_t *dstV_bytes = dstU_bytes + dstHeightC * dstPitch;
-    T *rowV = reinterpret_cast<T *>(dstV_bytes + uv_y * dstPitch);
-
-    rowU[uv_x] = clip_val<T>(u_comp, dstBitdepth);
-    rowV[uv_x] = clip_val<T>(v_comp, dstBitdepth);
-  }
+  // Scale apply
+  auto apply_scale = [&](float3 &c, float &off) {
+    c.x *= scale; c.y *= scale; c.z *= scale; off *= scale;
+  };
+  apply_scale(ccp.y_coef, ccp.y_off);
+  apply_scale(ccp.u_coef, ccp.u_off);
+  apply_scale(ccp.v_coef, ccp.v_off);
 }
 
 void postprocess(const PostprocessParams &params, cudaStream_t stream) {
-  // TILE_SIZE is input tile size. Output is 4x.
-  const int effective_tile_dim = TILE_SIZE * 4;
-  const int tile_size = effective_tile_dim - 2 * params.overlap_pixels;
-  const int batch = (params.dst_width[0] + tile_size - 1) / tile_size;
+  KernelContext ctx;
 
-  dim3 block(32, 32, 1);
+  // Geometry Setup
+  // params.src_tensor가 NCHW이고 4x super resolution이라고 가정하면 
+  // tensor width는 input tile size * 4. 여기서는 TILE_SIZE 상수에 의존.
+  ctx.tensor_stride = TILE_SIZE * 4;                                   
+
+  // overlap_pixels는 원본 해상도 기준일 수 있으므로 scale factor(4)를 곱함
+  ctx.overlap = params.overlap_pixels * 4;
+
+  // 유효 영역(Valid Area) 계산: 양쪽 padding을 뺀 영역
+  ctx.src_valid_w = ctx.tensor_stride - 2 * ctx.overlap; 
+  ctx.src_valid_h = ctx.tensor_stride - 2 * ctx.overlap;
+
+  ctx.dst_width = params.dst_frame->width;
+  ctx.dst_height = params.dst_frame->height;
+  ctx.start_tile_index = params.start_tile_index;
+
+  // Global Tiling Info
+  ctx.num_tiles_x = (params.src_virtual_width + ctx.src_valid_w - 1) / ctx.src_valid_w;
+
+  // Scale Factors
+  ctx.scale_x = (float)ctx.dst_width / params.src_virtual_width;
+  ctx.scale_y = (float)ctx.dst_height / params.src_virtual_height;
+
+  // Output Format Info
+  ctx.dst_stride_y = params.dst_frame->planes[0].stride;
+  ctx.dst_stride_uv = params.dst_frame->planes[1].stride;
+  ctx.is_nv12 = is_semi_planar(params.dst_frame->format);
+  ctx.chroma_sub_x = 1; // 4:2:0/4:2:2 assumed
+  ctx.chroma_sub_y = get_chroma_shift_y(params.dst_frame->format);
+
+  populate_ccparams(ctx.ccp, params.video_full_range_flag, params.dst_frame->bitdepth);
+
+  // Launch Configuration
+  // Max size of a tile in destination pixels
+  float max_dst_tile_w = ctx.src_valid_w * ctx.scale_x;
+  float max_dst_tile_h = ctx.src_valid_h * ctx.scale_y;
+
+  dim3 block(32, 16);
   dim3 grid;
-  grid.x = (tile_size + 31) / 32;
-  grid.y = (tile_size + 31) / 32;
-  grid.z = batch;
+  grid.x = (int)((max_dst_tile_w + block.x - 1) / block.x);
+  grid.y = (int)((max_dst_tile_h + block.y - 1) / block.y);
+  grid.z = params.batch_size;
 
-  ColorConvParams cc_params{};
-  // Full range flag and bitdepth needed for conversion coeffs
-  populate_ccparams(cc_params, params.video_full_range_flag,
-                    params.dst_bitdepth);
+  // Safety check
+  grid.x = max(1, grid.x);
+  grid.y = max(1, grid.y);
 
-  int dstHeightC = params.dst_height[1];
+  const half *src = static_cast<const half *>(params.src_tensor->data.get());
+  uint8_t *ptr_dst_y = params.dst_frame->planes[0].data;
+  uint8_t *ptr_dst_u = params.dst_frame->planes[1].data;
+  uint8_t *ptr_dst_v = (params.dst_frame->num_planes > 2) ? params.dst_frame->planes[2].data : nullptr;
 
-  if (params.dst_bitdepth == 8) {
-    postprocess_yuv_kernel<uint8_t><<<grid, block, 0, stream>>>(
-        params.d_srcTensor, (uint8_t *)params.d_dst, params.dst_width[0],
-        params.dst_height[0], dstHeightC, params.dst_start_y,
-        params.dst_bitdepth, params.dst_pitch, params.overlap_pixels, cc_params,
-        params.dst_num_comps);
+  if (params.dst_frame->bitdepth == 8) {
+    k_postprocess<uint8_t><<<grid, block, 0, stream>>>(src, ptr_dst_y, ptr_dst_u, ptr_dst_v, ctx);
   } else {
-    postprocess_yuv_kernel<uint16_t><<<grid, block, 0, stream>>>(
-        params.d_srcTensor, (uint16_t *)params.d_dst, params.dst_width[0],
-        params.dst_height[0], dstHeightC, params.dst_start_y,
-        params.dst_bitdepth, params.dst_pitch, params.overlap_pixels, cc_params,
-        params.dst_num_comps);
+    k_postprocess<uint16_t><<<grid, block, 0, stream>>>(src, ptr_dst_y, ptr_dst_u, ptr_dst_v, ctx);
   }
 }
