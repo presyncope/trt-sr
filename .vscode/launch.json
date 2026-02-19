@@ -8,8 +8,11 @@
             "name": "(gdb) superres c++",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/scripts/cpp-build/bin/superres_app",
-            "args": ["--config", "scripts/cpp-build/config.ini"],
+            "program": "${workspaceFolder}/bin_rt/superres_app",
+            "args": [
+                "--config",
+                "cpp/config.ini"
+            ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
