@@ -13,7 +13,7 @@ DO_CLEAN=false
 NO_WARNINGS=false
 DOCKER_IMAGE="trt-devel:latest"
 INSTALL_PREFIX="bin"
-SOURCE_DIR="../cpp"
+SOURCE_DIR="."
 RUNTIME_MODE=false
 
 # 인자 파싱
