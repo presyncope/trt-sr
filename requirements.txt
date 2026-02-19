@@ -1,5 +1,0 @@
-tensorrt
-onnx
-onnxconverter-common
-nvidia-modelopt[all]
-pymediainfo

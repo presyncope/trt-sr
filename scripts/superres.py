@@ -47,6 +47,37 @@ def parse_args():
     )
     parser.add_argument("--prescale", type=float, default=1.0, help="Prescale factor")
     parser.add_argument("--overlap", type=int, default=4, help="Overlap pixels")
+    parser.add_argument(
+        "--version-compatible",
+        action="store_true",
+        help="Enable version compatibility",
+    )
+    parser.add_argument(
+        "--exclude-lean-runtime",
+        action="store_true",
+        help="Exclude lean runtime from plan",
+    )
+    # Batch and performance options
+    parser.add_argument(
+        "--batches", type=int, default=1, help="Concurrent batches (1-64)"
+    )
+    parser.add_argument(
+        "--workspace", type=int, default=0, help="Max workspace size (bytes)"
+    )
+    parser.add_argument(
+        "--min-batch", type=int, default=1, help="Min batch size for engine"
+    )
+    parser.add_argument(
+        "--max-batch", type=int, default=8, help="Max batch size for engine"
+    )
+    parser.add_argument(
+        "--opt-batch", type=int, default=8, help="Optimal batch size for engine"
+    )
+    parser.add_argument(
+        "--strongly-typed",
+        action="store_true",
+        help="Enable strongly typed network",
+    )
 
     args = parser.parse_args()
 
@@ -145,7 +176,19 @@ def main():
         str(args.prescale),
         "--overlap",
         str(args.overlap),
+        "--batches",
+        str(args.batches),
+        "--workspace",
+        str(args.workspace),
+        "--min-batch",
+        str(args.min_batch),
+        "--max-batch",
+        str(args.max_batch),
+        "--opt-batch",
+        str(args.opt_batch),
     ]
+    if args.strongly_typed:
+        cmd.append("--strongly-typed")
     if args.output_width > 0:
         cmd.extend(["--output-width", str(args.output_width)])
     if args.output_height > 0:
@@ -153,6 +196,12 @@ def main():
 
     if args.onnx_file:
         cmd.extend(["--onnx-file", args.onnx_file])
+
+    if args.version_compatible:
+        cmd.append("--version-compatible")
+
+    if args.exclude_lean_runtime:
+        cmd.append("--exclude-lean-runtime")
 
     print(f"Starting App: {' '.join(cmd)}")
 

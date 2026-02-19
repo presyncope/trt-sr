@@ -38,6 +38,8 @@ struct AppConfig {
   int max_batch_size = 8;
   int opt_batch_size = 8;
   bool strongly_typed = false;
+  bool version_compatible = false;
+  bool exclude_lean_runtime = false;
 };
 
 // Helper to map string to sr_pixel_format
@@ -103,12 +105,22 @@ AppConfig parse_args(int argc, char **argv) {
   app.add_option("--overlap", config.overlap, "Overlap pixels");
 
   // New options for updated API
-  app.add_option("--batches", config.concurrent_batches, "Concurrent batches (1-64)");
-  app.add_option("--workspace", config.max_workspace_size, "Max workspace size (bytes)");
-  app.add_option("--min-batch", config.min_batch_size, "Min batch size for engine");
-  app.add_option("--max-batch", config.max_batch_size, "Max batch size for engine");
-  app.add_option("--opt-batch", config.opt_batch_size, "Optimal batch size for engine");
-  app.add_flag("--strongly-typed", config.strongly_typed, "Enable strongly typed network");
+  app.add_option("--batches", config.concurrent_batches,
+                 "Concurrent batches (1-64)");
+  app.add_option("--workspace", config.max_workspace_size,
+                 "Max workspace size (bytes)");
+  app.add_option("--min-batch", config.min_batch_size,
+                 "Min batch size for engine");
+  app.add_option("--max-batch", config.max_batch_size,
+                 "Max batch size for engine");
+  app.add_option("--opt-batch", config.opt_batch_size,
+                 "Optimal batch size for engine");
+  app.add_flag("--strongly-typed", config.strongly_typed,
+               "Enable strongly typed network");
+  app.add_flag("--version-compatible", config.version_compatible,
+               "Enable version compatibility");
+  app.add_flag("--exclude-lean-runtime", config.exclude_lean_runtime,
+               "Exclude lean runtime from plan");
 
   try {
     app.parse(argc, argv);
@@ -132,6 +144,49 @@ AppConfig parse_args(int argc, char **argv) {
   return config;
 }
 
+void print_config(const AppConfig &config) {
+  std::cerr << "==========================================" << std::endl;
+  std::cerr << "SuperRes App Configuration:" << std::endl;
+  std::cerr << "  Mode:                " << config.mode
+            << " (1:build, 2:process, 3:both)" << std::endl;
+  if (!config.onnx_file.empty())
+    std::cerr << "  ONNX File:           " << config.onnx_file << std::endl;
+  std::cerr << "  Plan File:           " << config.plan_file << std::endl;
+  if (!config.input_yuv_file.empty())
+    std::cerr << "  Input YUV:           " << config.input_yuv_file
+              << std::endl;
+  if (!config.output_yuv_file.empty())
+    std::cerr << "  Output YUV:          " << config.output_yuv_file
+              << std::endl;
+  std::cerr << "  Input Size:          " << config.input_width << "x"
+            << config.input_height << " (" << config.input_format_str << ", "
+            << (config.input_full_range ? "Full" : "Limited") << ")"
+            << std::endl;
+  std::cerr << "  Output Size:         " << config.output_width << "x"
+            << config.output_height << " (" << config.output_format_str << ", "
+            << (config.output_full_range ? "Full" : "Limited") << ")"
+            << std::endl;
+  std::cerr << "  Prescale:            " << config.prescale << std::endl;
+  std::cerr << "  Overlap:             " << config.overlap << std::endl;
+  std::cerr << "  Concurrent Batches:  " << config.concurrent_batches
+            << std::endl;
+  if (config.mode & 1) {
+    std::cerr << "  TRT Build Params:" << std::endl;
+    std::cerr << "    Workspace:         " << config.max_workspace_size
+              << std::endl;
+    std::cerr << "    Batch [min,opt,max]: [" << config.min_batch_size << ", "
+              << config.opt_batch_size << ", " << config.max_batch_size << "]"
+              << std::endl;
+    std::cerr << "    Strongly Typed:    "
+              << (config.strongly_typed ? "true" : "false") << std::endl;
+    std::cerr << "    Version Compatible: "
+              << (config.version_compatible ? "true" : "false") << std::endl;
+    std::cerr << "    Exclude Lean Runtime: "
+              << (config.exclude_lean_runtime ? "true" : "false") << std::endl;
+  }
+  std::cerr << "==========================================" << std::endl;
+}
+
 void build_plan(const AppConfig &config) {
   sr_build_params bpar{};
   bpar.model_onnx = config.onnx_file.c_str();
@@ -141,6 +196,8 @@ void build_plan(const AppConfig &config) {
   bpar.max_batch_size = config.max_batch_size;
   bpar.optimal_batch_size = config.opt_batch_size;
   bpar.strongly_typed = config.strongly_typed;
+  bpar.version_compatible = config.version_compatible;
+  bpar.exclude_lean_runtime = config.exclude_lean_runtime;
 
   int ret = sr_build(&bpar);
   if (ret != 0) {
@@ -342,6 +399,8 @@ void process(const AppConfig &config) {
 
 int main(int argc, char **argv) {
   AppConfig config = parse_args(argc, argv);
+
+  print_config(config);
 
   if (config.mode & 1)
     build_plan(config);

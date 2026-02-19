@@ -6,7 +6,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(CheckLanguage)
 check_language(CUDA)
 
+# =========================================================================
+# User Options
+# =========================================================================
 option(ENABLE_SUPERRES "Enable Super Resolution feature with CUDA" ON)
+option(USE_TRT_LEAN "Build with nvinfer_lean instead of nvinfer" OFF)
+option(USE_ONNX_PARSER "Enable ONNX Parser (nvonnxparser)" ON)
 
 # 1. Check CUDA Compiler existence
 if(NOT CMAKE_CUDA_COMPILER)
@@ -31,32 +36,49 @@ find_package(CUDAToolkit REQUIRED)
 message(STATUS "Found CUDA Toolkit Version: ${CUDAToolkit_VERSION}")
 message(STATUS "CUDA Toolkit Root: ${CUDAToolkit_LIBRARY_ROOT}")
 
-# 3. Find TensorRT
+# =========================================================================
+# 3. Find TensorRT (Dynamically controlled by options)
+# =========================================================================
 find_path(TENSORRT_INCLUDE_DIR NvInfer.h
     HINTS /usr/include /usr/local/include /usr/local/tensorrt/include
 )
-find_library(NVINFER_LIB nvinfer
-    HINTS /usr/lib /usr/local/lib /usr/local/tensorrt/lib
-)
-find_library(NVONNXPARSER_LIB nvonnxparser
+
+if(USE_TRT_LEAN)
+    set(TRT_LIB_NAME "nvinfer_lean")
+else()
+    set(TRT_LIB_NAME "nvinfer")
+endif()
+
+find_library(NVINFER_LIB ${TRT_LIB_NAME}
     HINTS /usr/lib /usr/local/lib /usr/local/tensorrt/lib
 )
 
+if(USE_ONNX_PARSER)
+    find_library(NVONNXPARSER_LIB nvonnxparser
+        HINTS /usr/lib /usr/local/lib /usr/local/tensorrt/lib
+    )
+else()
+    set(NVONNXPARSER_LIB OFF)
+    message(STATUS "ONNX Parser search disabled by user option (-DUSE_ONNX_PARSER=OFF).")
+endif()
+
+# =========================================================================
 # 4. Validate TensorRT and Define Target
+# =========================================================================
 if (NOT NVINFER_LIB OR NOT TENSORRT_INCLUDE_DIR)
-    message(STATUS "Could not find TensorRT (nvinfer or headers). SuperRes build will be skipped (ENABLE_SUPERRES remains ON).")
+    message(STATUS "Could not find TensorRT (${TRT_LIB_NAME} or headers). SuperRes build will be skipped (ENABLE_SUPERRES remains ON).")
     set(SUPERRES_FOUND OFF CACHE INTERNAL "SuperRes library is built and available")
     return()
 endif()
 
 message(STATUS "TensorRT Found:")
 message(STATUS "  Include: ${TENSORRT_INCLUDE_DIR}")
-message(STATUS "  Lib nvinfer: ${NVINFER_LIB}")
+message(STATUS "  Lib ${TRT_LIB_NAME}: ${NVINFER_LIB}")
 
 if (NVONNXPARSER_LIB)
     message(STATUS "  Lib nvonnxparser: ${NVONNXPARSER_LIB} (Found)")
 else()
-    message(STATUS "  Lib nvonnxparser: NOT FOUND. sr_build will be disabled.")
+    message(STATUS "  Lib nvonnxparser: NOT FOUND or DISABLED. ONNX Parser logic will be excluded.")
 endif()
 
 add_library(superres SHARED

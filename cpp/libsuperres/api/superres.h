@@ -1,5 +1,4 @@
 #pragma once
-#define ENABLE_NVONNXPARSER 1
 
 #include <stddef.h>
 #include <stdint.h>
@@ -77,6 +76,28 @@ typedef struct sr_build_params {
   int max_batch_size;
   int optimal_batch_size;
   bool strongly_typed;
+
+  /**
+   * Restrict to lean runtime operators to provide version forward compatibility
+   * for the plan. This flag is only supported by NVIDIA Volta and later GPUs.
+   * This flag is not supported in NVIDIA Drive(R) products. */
+  bool version_compatible;
+
+  /**
+   * Excludes the lean runtime from the serialized plan.
+   *
+   * - true (Excluded): Minimizes plan file size (storage efficiency).
+   * However, you must manually load the matching 'libnvinfer_lean.so' at
+   * runtime. Recommended for multi-model environments to share a single runtime
+   * library.
+   *
+   * - false (Included): Embeds the runtime into the plan (larger file size).
+   * Provides self-contained version compatibility, simplifying deployment
+   * as it runs without manually loading external runtime libraries.
+   *
+   * Requires 'version_compatible' to be true.
+   */
+  bool exclude_lean_runtime;
 } sr_build_params;
 
 typedef struct sr_frame {

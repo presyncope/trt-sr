@@ -1,0 +1,12 @@
+input: "/mnt/d/videos/avatar.ts"
+output: "output.mp4"
+mode: 2
+plan_file: "../bin_rt/x4v3.plan"
+app_dir: "../bin_rt/"
+
+output_width: 1920
+output_height: 1080
+
+prescale: 0.75
+batches: 16
+overlap: 4
