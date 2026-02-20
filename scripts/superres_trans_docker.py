@@ -26,7 +26,6 @@ import docker_utils
 import yaml
 import av
 import docker
-import numpy as np
 
 # pylint: disable=broad-exception-caught
 
@@ -56,6 +55,16 @@ class VideoMetadata:
     pix_fmt: str
     app_input_fmt: str
     stream_index: int
+
+
+def _suppress_urllib3_gc_error(exc):
+    if isinstance(exc.exc_value, ValueError) and "closed file" in str(exc.exc_value):
+        pass  # 조용히 무시합니다.
+    else:
+        sys.__unraisablehook__(exc)  # 다른 진짜 에러는 정상적으로 출력합니다.
+
+
+sys.unraisablehook = _suppress_urllib3_gc_error
 
 
 def map_pix_fmt(av_fmt: str) -> str | None:
@@ -318,6 +327,7 @@ def setup_docker_container(
     container = client.containers.create(
         image=args.image,
         command=cmd_app,
+        entrypoint=[],
         volumes=volumes,
         working_dir="/workspace",
         user=f"{os.getuid()}:{os.getgid()}",
@@ -512,6 +522,12 @@ def main():
 
     finally:
         # 5. Safe Cleanup
+        if "docker_pipe" in locals():
+            docker_pipe.close()
+
+        if "feeder" in locals() and feeder.is_alive():
+            feeder.join(timeout=5.0)
+
         if "container" in locals():
             try:
                 container.kill()
@@ -520,11 +536,11 @@ def main():
             except Exception as e:
                 logger.debug("Container cleanup ignored or failed: %s", e)
 
-        if "docker_pipe" in locals():
-            docker_pipe.close()
-
-        if "feeder" in locals() and feeder.is_alive():
-            feeder.join(timeout=5.0)
+        if "docker_client" in locals():
+            try:
+                docker_client.close()
+            except Exception:
+                pass
 
         logger.info("Pipeline finished.")
 

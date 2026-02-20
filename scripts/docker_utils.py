@@ -8,6 +8,8 @@ import logging
 import socket
 import struct
 
+# pylint: disable=broad-exception-caught
+
 __all__ = [
     "get_abs_path",
     "get_config_paths",
@@ -132,6 +134,8 @@ class DockerDemuxer:
         if hasattr(self._raw_sock, "setblocking"):
             self._raw_sock.setblocking(True)
 
+        self._buffer = bytearray()
+
     def write(self, data: bytes):
         """Write raw data to the stdin of the Docker container."""
         try:
@@ -146,10 +150,31 @@ class DockerDemuxer:
             raise
 
     def read(self, n: int) -> bytes | None:
-        """
-        Read exactly n bytes of raw payload from the stdout stream.
-        No header demultiplexing, just pure byte aggregation.
-        """
+        """Reads exactly n bytes of pure payload, stripping Docker headers."""
+        while len(self._buffer) < n:
+            header = self._read_raw(8)
+            if not header:
+                return None
+
+            stream_type = header[0]
+            payload_size = struct.unpack(">I", header[4:8])[0]
+
+            payload = self._read_raw(payload_size)
+            if not payload or len(payload) < payload_size:
+                return None
+
+            if stream_type == 1:  # STDOUT (YUV Data)
+                self._buffer.extend(payload)
+            elif stream_type == 2:  # STDERR (C++ Logs)
+                stderr_msg = payload.decode("utf-8", errors="replace").strip()
+                if stderr_msg:
+                    logger.error("[App STDERR] %s", stderr_msg)
+
+        ret = bytes(self._buffer[:n])
+        del self._buffer[:n]
+        return ret
+
+    def _read_raw(self, n: int) -> bytes | None:
         data = bytearray()
         while len(data) < n:
             to_read = n - len(data)
@@ -161,23 +186,29 @@ class DockerDemuxer:
                 else:
                     break
 
-                if not chunk:  # Socket gracefully closed or EOF
+                if not chunk:
                     break
                 data.extend(chunk)
-            except OSError as e:
-                logger.error("Socket IO Error during read: %s", e)
+            except OSError:
                 break
-
-        # 요청한 바이트를 다 못 채웠으면 불완전한 데이터로 간주하고 None 반환
         return bytes(data) if len(data) == n else None
 
     def close(self):
-        """Gracefully close the underlying socket."""
+        """Gracefully close the underlying socket and suppress urllib3 GC warnings."""
         try:
+            if hasattr(self.sock, "_fp") and hasattr(
+                getattr(self.sock, "_fp"), "flush"
+            ):
+                self.sock._fp.flush = lambda: None  # pylint: disable=protected-access
+            elif hasattr(self.sock, "fp") and hasattr(
+                getattr(self.sock, "fp"), "flush"
+            ):
+                self.sock.fp.flush = lambda: None
+
             if hasattr(self.sock, "close"):
                 self.sock.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Socket close exception: %s", e)
 
     def shutdown_write(self):
         """
