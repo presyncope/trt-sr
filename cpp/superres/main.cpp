@@ -326,21 +326,37 @@ void process(const AppConfig &config) {
     std::cerr << "Failed to init superres" << std::endl;
     return;
   }
+  std::cerr << "[DEBUG] Parsed input arg: [" << config.input_yuv_file << "]"
+            << std::endl;
 
-  std::ifstream input(config.input_yuv_file, std::ios::binary);
-  if (!input.is_open()) {
-    std::cerr << "Failed to open input file: " << config.input_yuv_file
-              << std::endl;
-    return;
+  std::ios_base::sync_with_stdio(false);
+  std::cin.tie(NULL);
+
+  // 1. 입력 스트림 설정 (stdin 분기)
+  std::ifstream file_input;
+  if (config.input_yuv_file != "-") {
+    file_input.open(config.input_yuv_file, std::ios::binary);
+    if (!file_input.is_open()) {
+      std::cerr << "Failed to open input file: " << config.input_yuv_file
+                << "\n";
+      return;
+    }
   }
 
-  std::ofstream output(config.output_yuv_file, std::ios::binary);
+  std::istream &input = (config.input_yuv_file == "-") ? std::cin : file_input;
 
-  if (!output.is_open()) {
-    std::cerr << "Failed to open output file: " << config.output_yuv_file
-              << std::endl;
-    return;
+  // 2. 출력 스트림 설정 (stdout 분기)
+  std::ofstream file_output;
+  if (config.output_yuv_file != "-") {
+    file_output.open(config.output_yuv_file, std::ios::binary);
+    if (!file_output.is_open()) {
+      std::cerr << "Failed to open output file: " << config.output_yuv_file
+                << "\n";
+      return;
+    }
   }
+  std::ostream &output =
+      (config.output_yuv_file == "-") ? std::cout : file_output;
 
   size_t input_size = get_frame_size(config.input_width, config.input_height,
                                      config.input_format);

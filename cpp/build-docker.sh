@@ -3,8 +3,6 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# SCRIPT_DIR is .../scripts
-# PROJECT_ROOT is .../trt-sr
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # 기본값 설정
@@ -91,12 +89,23 @@ if [ "$DO_CLEAN" = true ]; then
     rm -rf "$SCRIPT_DIR/build"
 fi
 
-# Docker 명령어 구성
-# -u $(id -u):$(id -g): 생성된 파일의 소유권이 현재 사용자와 일치하도록 설정
-# -v "$PROJECT_ROOT":/workspace: 프로젝트 루트를 컨테이너의 /workspace에 마운트
-# -w /workspace/scripts: 작업 디렉터리 설정 (스크립트 위치)
-
-DOCKER_CMD="docker run --rm -v $PROJECT_ROOT:/workspace -w /workspace/scripts -u $(id -u):$(id -g) $DOCKER_IMAGE"
+# ==========================================
+# 🚀 Docker 명령어 구성 (GPU 및 메모리 최적화)
+# ==========================================
+# --gpus all: NVCC 컴파일러 최적화 및 테스트를 위한 GPU 접근 허용
+# --shm-size=8g: 병렬 빌드(-j) 시 공유 메모리 부족으로 인한 gcc/nvcc 크래시 방지
+# --ulimit memlock=-1: TensorRT의 Pinned Memory 할당 제한 해제
+# --ulimit stack=67108864: 깊은 재귀나 템플릿 메타프로그래밍 컴파일 시 스택 오버플로우 방지
+# ==========================================
+DOCKER_ARGS=(docker run --rm \
+  --gpus all \
+  --shm-size=8g \
+  --ulimit memlock=-1 \
+  --ulimit stack=67108864 \
+  -v "$PROJECT_ROOT":/workspace \
+  -w /workspace/cpp \
+  -u "$(id -u):$(id -g)" \
+  "$DOCKER_IMAGE")
 
 # Prefix 경로 처리 (절대 경로가 아니면 /workspace 기준 상대 경로로 변환)
 if [[ "$INSTALL_PREFIX" != /* ]]; then
@@ -106,9 +115,6 @@ else
 fi
 
 # 컨테이너 내부에서 실행할 스크립트 구성
-# SOURCE_DIR: /workspace/cpp (scripts 기준 ../cpp)
-# OUTPUT_DIR: $DOCKER_INSTALL_PREFIX (RUNTIME 및 LIBRARY 모두 설정)
-
 BUILD_CMD="TRT_ROOT=\$(ls -d /TensorRT* 2>/dev/null | head -n 1) && "
 BUILD_CMD+="if [ -z \"\$TRT_ROOT\" ]; then echo \"WARNING: TensorRT root not found in /\"; else echo \"Found TensorRT at: \$TRT_ROOT\"; fi && "
 BUILD_CMD+="mkdir -p build && "
@@ -131,6 +137,6 @@ BUILD_CMD+="&& cmake --build build --parallel"
 
 echo "Executing build in Docker..."
 # bash -c를 사용하여 명령어 문자열 실행
-$DOCKER_CMD bash -c "$BUILD_CMD"
+"${DOCKER_ARGS[@]}" bash -c "$BUILD_CMD"
 
 echo "Docker build process finished. Artifacts are in: $DOCKER_INSTALL_PREFIX"

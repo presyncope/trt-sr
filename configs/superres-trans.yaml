@@ -1,0 +1,17 @@
+# SuperRes Transcoding Configuration
+
+# Input/Output
+input: "samples/sample-5s.mp4"
+output: "output.mp4"
+
+# Model
+plan_file: "model.plan"
+
+# Output Video Settings
+output_width: 1920
+output_height: 1080
+
+# Processing Settings
+prescale: 0.75
+overlap: 4
+batches: 16

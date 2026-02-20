@@ -2,6 +2,7 @@
 # Edit at https://www.toptal.com/developers/gitignore?templates=visualstudiocode,python,cmake,c++,jupyternotebooks
 *.yuv
 *.mp4
+*.plan
 !sample-5s.mp4
 ### C++ ###
 # Prerequisites

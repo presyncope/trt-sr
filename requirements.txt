@@ -1,0 +1,5 @@
+docker
+pyyaml
+av
+numpy
+# apt: ffmpeg
